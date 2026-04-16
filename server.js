@@ -1,525 +1,393 @@
-# **COMPREHENSIVE SYSTEM PROMPT: "For Her" Multi-Device Sync + Music System**
+// server.js
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const cors = require('cors');
+const path = require('path');
+const uuid = require('uuid');
 
----
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-## **PROJECT OVERVIEW**
+app.use(cors());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-You are building a **"For Her" digital gift experience** — a beautiful, cinematic slideshow with synchronized music that plays across multiple devices in real-time. The system consists of three main components:
-
-1. **Admin Panel** (`admin.html`) — Create/edit slides, upload audio/images, customize everything
-2. **Main Site** (`index.html`) — Display the slideshow with synced audio/animations
-3. **Backend Engine** (`app.js`) — Handle cross-device synchronization, audio playback, slide transitions
-
-### **Core Requirements**
-
-#### **1. DEVICE SYNCHRONIZATION**
-- Changes made on **any device** must appear on **all other devices** instantly
-- Use **WebSocket** (or Firebase/Supabase) for real-time sync
-- Admin edits slides → all watching devices update immediately without reload
-- One device plays → all devices see same slide + hear same music (within 500ms tolerance)
-- Use **localStorage + IndexedDB + WebSockets** trinity for bulletproof sync
-
-#### **2. AUDIO SYSTEM**
-- **Upload MP3/WAV/OGG** directly in admin panel
-- Store as **base64 in IndexedDB** (no server needed initially)
-- **Sync playback across devices** (press play on Device A → Device B starts at same timestamp)
-- **Fade in/out** with custom durations
-- **Loop seamlessly** without silence
-- **Resume functionality** — if device goes offline, resume from correct position when reconnected
-- Support **multiple audio tracks per session** (switch songs between slides)
-- **Audio visualizer** (optional but beautiful) — animated bars that respond to frequency
-
-#### **3. REAL-TIME ADMIN EDITING**
-- Admin changes slide text → appears on live view immediately
-- Admin uploads new image → all viewers see updated slide without page reload
-- Admin adds new slide → shifts appear in sequence on all devices
-- Admin changes music track → synced playback restarts on all devices
-- **Conflict resolution** — if admin and viewer try to edit simultaneously, admin wins
-
-#### **4. MULTI-DEVICE COORDINATION**
-- **Master Device** (admin or first device to press play) controls playback
-- **Follower Devices** sync to master's timeline
-- If master stops, all followers pause
-- If follower gets ahead/behind, snap to master time (±500ms correction)
-- **Offline support** — devices continue locally until reconnected, then re-sync
-
-#### **5. CUSTOMIZATION PERSISTENCE**
-All these settings sync across devices:
-- Slide text, images, timings, animations
-- Audio files (base64 stored)
-- End card messages (birthday message, recipient name)
-- Page title, button text, colors
-- Music fade durations and volumes
-
----
-
-## **TECHNICAL ARCHITECTURE**
-
-### **Database Structure (IndexedDB + WebSocket)**
-
-```
-ForHerDB/
-├── slides
-│   ├── id: slideID
-│   ├── text: string
-│   ├── image: base64
-│   ├── duration: ms
-│   ├── kenBurns: enum
-│   ├── position: enum
-│   └── lines: []
-├── songs
-│   ├── id: songID
-│   ├── title: string
-│   ├── audioData: base64
-│   ├── volume: 0-1
-│   ├── fadeIn: ms
-│   └── fadeOut: ms
-├── endCard
-│   ├── pre: string
-│   ├── title: string
-│   ├── sub: string
-│   └── msg: string
-├── page
-│   ├── name: string
-│   ├── btn: string
-│   ├── title: string
-│   └── colors: {}
-└── syncState
-    ├── currentSlide: number
-    ├── isPlaying: boolean
-    ├── timestamp: ms
-    ├── deviceId: string
-    └── lastUpdate: timestamp
-```
-
-### **WebSocket Messages**
-
-```javascript
-// Admin → Server → All Viewers
-{
-  type: 'SLIDE_UPDATE',
-  deviceId: 'admin-device-1',
-  slideId: 5,
-  data: { text: 'New text...', image: 'data:image/...' },
-  timestamp: 1704067200000
-}
-
-// Master Device → Server → Followers
-{
-  type: 'PLAYBACK_SYNC',
-  deviceId: 'master-device',
-  currentSlide: 3,
-  timestamp: 5000,
-  isPlaying: true,
-  masterTime: 1704067200000
-}
-
-// Admin Changes Audio
-{
-  type: 'AUDIO_UPDATE',
-  deviceId: 'admin-device-1',
-  songId: 0,
-  audioData: 'data:audio/...',
-  volume: 0.85,
-  fadeIn: 800,
-  timestamp: 1704067200000
-}
-
-// Device Reconnects
-{
-  type: 'SYNC_REQUEST',
-  deviceId: 'device-5',
-  lastSyncTime: 1704067195000
-}
-
-// Server Sends Full State
-{
-  type: 'FULL_SYNC',
-  slides: [...],
-  songs: [...],
-  currentSlide: 3,
-  timestamp: 5000,
-  masterDeviceId: 'master-device'
-}
-```
-
----
-
-## **ADMIN PANEL REQUIREMENTS** (`admin.html`)
-
-### **Tabs & Features**
-
-1. **Slides Tab**
-   - List all slides with previews
-   - Edit: text, image, duration, Ken Burns effect, position, tint overlay
-   - Add/delete/duplicate/reorder slides
-   - Real-time preview
-   - Drag-and-drop reordering
-
-2. **Songs Tab**
-   - Upload MP3/WAV/OGG files (drag-and-drop support)
-   - Set: title, start time, volume, fade in/out times
-   - Audio player preview (shows duration)
-   - Associate songs with slides
-   - Replace/delete audio files
-
-3. **End Card Tab**
-   - Edit: pre-title, main title, subtitle, message
-   - Live preview with animations
-   - Customizable styling (fonts, colors, spacing)
-
-4. **Edit Page Tab**
-   - Main page title, subtitle, button text
-   - Recipient's name (dynamic in title)
-   - Theme colors (accent, background)
-   - OG/social media preview text
-
-5. **Export Tab**
-   - Download as `content.json`
-   - Copy JSON to clipboard
-   - Import from JSON (drag-drop)
-   - Reset to defaults
-
-### **Admin-Specific Features**
-- **Live Preview Window** showing what viewers see
-- **Device Status Panel** — see all connected devices, their position, online/offline status
-- **Broadcast Control** — force all devices to specific slide, pause/resume all
-- **Sync Monitor** — confirm changes pushed to all devices
-- **Conflict Resolution** — show if user on Device B tries to edit (lock or merge)
-
----
-
-## **MAIN SITE REQUIREMENTS** (`index.html`)
-
-### **Key Sections**
-
-1. **Intro Page**
-   - Centered title: "For [Name]"
-   - Dynamically pull name from config
-   - Button: "Begin" (or custom text)
-   - Fade in/out animations
-   - Hidden until play is pressed
-
-2. **Slide Viewer**
-   - Full-screen image background
-   - Ken Burns motion (zoom, pan, drift)
-   - Text overlay (bottom, center, or custom position)
-   - Multiple lyric lines with staggered animations
-   - Scene counter (e.g., "03 / 16")
-   - Progress bar at top
-   - Music visualizer at bottom-left
-   - Song title display at bottom-right
-
-3. **End Card**
-   - Shows after last slide
-   - Ornamental decoration (petals, lines, diamond)
-   - Messages from admin
-   - "Watch Again" button
-   - Optional: confetti animation, music fade
-
-### **Playback Controls**
-- **Start Button** — starts slideshow, plays audio
-- **Keyboard Shortcuts**
-  - Right arrow / Space → next slide
-  - Left arrow → previous slide
-  - M → mute audio
-  - F → fullscreen
-- **Auto-advance** → slides progress automatically based on duration
-- **Music sync** → audio stays perfectly in sync even if slide skipped
-
----
-
-## **APP.JS ENGINE REQUIREMENTS**
-
-### **Core Functions**
-
-```javascript
-// Initialization
-init()
-  - Initialize IndexedDB
-  - Load from local DB first, fallback to content.json
-  - Connect to WebSocket
-  - Build DOM
-  - Setup audio elements
-  - Listen for sync messages
-
-// Slide Management
-goSlide(index)
-  - Animate current slide out
-  - Animate next slide in
-  - Update progress bar
-  - Switch audio track
-  - Broadcast to all devices: "I'm on slide X at timestamp Y"
-
-// Audio Management
-playAudio(index)
-  - Fade in from 0 to target volume
-  - Start at configured time offset
-  - Loop seamlessly at end
-
-stopAudio(index)
-  - Fade out over duration
-  - Pause, don't stop
-
-switchAudio(fromIdx, toIdx)
-  - Fade out current
-  - Fade in new track
-  - Maintain slide timing
-
-// Sync Management
-handlePlaybackSync(message)
-  - If I'm master: ignore (I control)
-  - If I'm follower: snap to master timestamp if off by >500ms
-  - Update currentSlide, timestamp, isPlaying
-
-handleAdminUpdate(message)
-  - Update local IndexedDB
-  - Re-render affected slide
-  - Restart audio if it changed
-  - DON'T reload page
-
-handleFullSync(message)
-  - Replace entire state with server version
-  - Re-render everything
-  - Catch up to current slide/timestamp
-
-// WebSocket Connection
-connectWebSocket()
-  - Establish persistent connection
-  - Retry with exponential backoff
-  - Set unique deviceId (UUID)
-  - Listen for all message types
-  - Auto-reconnect on disconnect
-
-// Device Status
-reportStatus()
-  - Every 5 seconds, send: { deviceId, currentSlide, timestamp, isPlaying }
-  - Helps admin see where everyone is
-
-// Offline Support
-goOffline() / goOnline()
-  - Offline: pause audio, warn user
-  - Online: sync with server, resume
-```
-
-### **State Management**
-
-```javascript
-const appState = {
-  // Content
+// ─────────────────────────────────────────────
+// STATE (In-Memory + Persistent)
+// ─────────────────────────────────────────────
+let appState = {
   slides: [],
   songs: [],
   endCard: {},
   page: {},
-  
-  // Playback
-  currentSlide: -1,
-  isPlaying: false,
-  timestamp: 0, // ms within slide
-  
-  // Device
-  deviceId: 'unique-uuid',
-  isMaster: false,
-  isOnline: true,
-  
-  // Sync
-  masterDeviceId: null,
-  masterTimestamp: null,
-  lastSyncTime: 0
+  playback: {
+    currentSlide: -1,
+    timestamp: 0,
+    isPlaying: false,
+    masterDeviceId: null,
+    masterTime: Date.now()
+  },
+  devices: {}
+};
+
+// Load initial state (would load from DB in production)
+function loadState() {
+  try {
+    const fs = require('fs');
+    if (fs.existsSync('./appstate.json')) {
+      appState = JSON.parse(fs.readFileSync('./appstate.json', 'utf8'));
+    }
+  } catch (e) {
+    console.log('Using default state');
+  }
 }
-```
 
----
+function saveState() {
+  const fs = require('fs');
+  fs.writeFileSync('./appstate.json', JSON.stringify(appState, null, 2));
+}
 
-## **SYNCHRONIZATION FLOW**
+loadState();
 
-### **User Presses Play on Device A**
+// ─────────────────────────────────────────────
+// WEBSOCKET CONNECTIONS
+// ─────────────────────────────────────────────
+const clients = new Map();
 
-1. Device A sends: `{ type: 'PLAYBACK_START', deviceId: 'A', timestamp: 0 }`
-2. Server broadcasts to all devices: `{ type: 'MASTER_SET', masterId: 'A' }`
-3. Devices B, C, D listen to Device A's playback updates
-4. Device A sends every 100ms: `{ type: 'PLAYBACK_TICK', slide: 3, timestamp: 5234 }`
-5. Followers update their own timestamp to match (if within sync tolerance)
-6. If Device B gets ahead: snap back to Device A's time
-7. If Device A goes offline: Server picks next device as master (or prompts admin)
+wss.on('connection', (ws) => {
+  const deviceId = uuid.v4();
+  const deviceInfo = {
+    id: deviceId,
+    type: 'viewer', // 'admin' or 'viewer'
+    connectedAt: Date.now(),
+    currentSlide: -1,
+    isPlaying: false
+  };
 
-### **Admin Changes Slide Text**
+  clients.set(deviceId, { ws, deviceInfo });
 
-1. Admin types in text field
-2. LocalStorage + IndexedDB update immediately (feel instant)
-3. Admin HTML broadcasts: `{ type: 'SLIDE_UPDATE', slideId: 5, data: {...} }`
-4. Server forwards to all devices
-5. Device A playing: doesn't re-render current slide (stays smooth), buffers change for next time it shows
-6. Device B waiting: immediately shows updated slide
-7. All devices update IndexedDB (so if page reloads, change is there)
+  console.log(`✓ Device connected: ${deviceId}`);
 
-### **Admin Uploads New Audio File**
+  // Send initial state to new device
+  ws.send(JSON.stringify({
+    type: 'INIT',
+    deviceId,
+    state: appState,
+    devices: Array.from(clients.values()).map(c => c.deviceInfo)
+  }));
 
-1. Admin selects MP3 file
-2. Browser reads as base64 (happens in background)
-3. IndexedDB stores immediately (large blob, OK because IndexedDB has 50GB+ limit)
-4. Admin HTML broadcasts: `{ type: 'AUDIO_UPDATE', songId: 0, audioData: 'data:audio/...' }`
-5. Server forwards to all devices
-6. All devices update their audio element's `src` to new base64
-7. If currently playing: stops gracefully, replays with new audio
-8. If not playing: buffered until slide's music track is needed
+  // Broadcast device list to all
+  broadcast({
+    type: 'DEVICE_LIST',
+    devices: Array.from(clients.values()).map(c => c.deviceInfo)
+  });
 
----
+  // ─────────────────────────────────────────────
+  // MESSAGE HANDLER
+  // ─────────────────────────────────────────────
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data);
 
-## **OFFLINE + RECONNECT STRATEGY**
+      console.log(`📨 ${msg.type} from ${deviceId.substring(0, 8)}`);
 
-### **When Device Goes Offline**
-- IndexedDB still has all data locally
-- Audio can still play (it's in memory)
-- Slides still work
-- Show banner: "Offline — syncing when connection returns"
-- Queue any admin changes and retry
+      switch (msg.type) {
+        // Admin identifies itself
+        case 'IDENTIFY_ADMIN':
+          if (clients.has(deviceId)) {
+            const client = clients.get(deviceId);
+            client.deviceInfo.type = 'admin';
+            client.deviceInfo.label = msg.label || 'Admin';
+          }
+          broadcast({
+            type: 'DEVICE_LIST',
+            devices: Array.from(clients.values()).map(c => c.deviceInfo)
+          });
+          break;
 
-### **When Device Reconnects**
-- Send: `{ type: 'SYNC_REQUEST', deviceId, lastSyncTime }`
-- Server responds with updates since `lastSyncTime`
-- Merge changes with local state
-- Re-sync playback time with master device
-- Hide offline banner
+        // Slide update (admin)
+        case 'SLIDE_UPDATE':
+          appState.slides[msg.slideId] = msg.data;
+          saveState();
+          broadcast({
+            type: 'SLIDE_UPDATED',
+            slideId: msg.slideId,
+            data: msg.data,
+            deviceId
+          }, deviceId);
+          break;
 
----
+        // Add slide
+        case 'SLIDE_ADD':
+          appState.slides.push(msg.data);
+          saveState();
+          broadcast({
+            type: 'SLIDES_CHANGED',
+            slides: appState.slides,
+            deviceId
+          }, deviceId);
+          break;
 
-## **PERFORMANCE & CONSTRAINTS**
+        // Delete slide
+        case 'SLIDE_DELETE':
+          appState.slides.splice(msg.slideId, 1);
+          saveState();
+          broadcast({
+            type: 'SLIDES_CHANGED',
+            slides: appState.slides,
+            deviceId
+          }, deviceId);
+          break;
 
-### **File Size Limits**
-- Audio files: max 10MB (base64 explodes to 133% size, so ~7.5MB actual)
-- Images: max 5MB (users will compress anyway)
-- Total state size: keep under 50MB (IndexedDB is plenty)
+        // Reorder slides
+        case 'SLIDES_REORDER':
+          appState.slides = msg.slides;
+          saveState();
+          broadcast({
+            type: 'SLIDES_CHANGED',
+            slides: appState.slides,
+            deviceId
+          }, deviceId);
+          break;
 
-### **Sync Tolerance**
-- Master device broadcasts every 100ms
-- Followers sync if off by >500ms
-- Audio fade transitions: 800ms-1200ms (smooth but not laggy)
+        // Song update
+        case 'SONG_UPDATE':
+          if (!appState.songs[msg.songId]) appState.songs[msg.songId] = {};
+          Object.assign(appState.songs[msg.songId], msg.data);
+          saveState();
+          broadcast({
+            type: 'SONG_UPDATED',
+            songId: msg.songId,
+            data: appState.songs[msg.songId],
+            deviceId
+          }, deviceId);
+          break;
 
-### **Latency Handling**
-- Network roundtrip: ~100-200ms typical
-- Video-grade sync not needed (music + slides, tolerance is 500ms)
-- If WebSocket is slow, still works, just slightly delayed
+        // Add song
+        case 'SONG_ADD':
+          appState.songs.push(msg.data);
+          saveState();
+          broadcast({
+            type: 'SONGS_CHANGED',
+            songs: appState.songs,
+            deviceId
+          }, deviceId);
+          break;
 
----
+        // Delete song
+        case 'SONG_DELETE':
+          appState.songs.splice(msg.songId, 1);
+          saveState();
+          broadcast({
+            type: 'SONGS_CHANGED',
+            songs: appState.songs,
+            deviceId
+          }, deviceId);
+          break;
 
-## **RESPONSIVE DESIGN**
+        // End card update
+        case 'ENDCARD_UPDATE':
+          appState.endCard = msg.data;
+          saveState();
+          broadcast({
+            type: 'ENDCARD_UPDATED',
+            data: appState.endCard,
+            deviceId
+          }, deviceId);
+          break;
 
-### **Desktop**
-- Full 16:9 slideshow
-- Sidebar now shows device list, current song, slide counter
-- Admin panel full-featured
+        // Page config update
+        case 'PAGE_UPDATE':
+          appState.page = msg.data;
+          saveState();
+          broadcast({
+            type: 'PAGE_UPDATED',
+            data: appState.page,
+            deviceId
+          }, deviceId);
+          break;
 
-### **Mobile/Tablet**
-- Full-screen slideshow (safe for phones)
-- Text sizes adjust with `clamp()`
-- Touch-friendly: tap to next slide, pinch for fullscreen
-- Admin panel simplified (stack tabs vertically)
+        // Playback start
+        case 'PLAYBACK_START':
+          appState.playback.isPlaying = true;
+          appState.playback.masterDeviceId = deviceId;
+          appState.playback.masterTime = Date.now();
+          appState.playback.currentSlide = msg.slide || 0;
+          appState.playback.timestamp = msg.timestamp || 0;
 
----
+          if (clients.has(deviceId)) {
+            clients.get(deviceId).deviceInfo.isPlaying = true;
+          }
 
-## **ACCESSIBILITY & USABILITY**
+          broadcast({
+            type: 'PLAYBACK_START',
+            masterDeviceId: deviceId,
+            slide: appState.playback.currentSlide,
+            timestamp: appState.playback.timestamp,
+            masterTime: appState.playback.masterTime,
+            deviceId
+          });
+          break;
 
-### **Admin**
-- Keyboard shortcuts for common tasks (Ctrl+S to save, Ctrl+Z undo)
-- Undo/redo stack for accidental changes
-- Toast notifications for all actions
-- Loading spinners during sync
-- Clear error messages (not just "Error")
+        // Playback tick (master sends this every 100ms)
+        case 'PLAYBACK_TICK':
+          appState.playback.currentSlide = msg.slide;
+          appState.playback.timestamp = msg.timestamp;
+          appState.playback.masterTime = Date.now();
 
-### **Viewer**
-- Captions for audio (optional)
-- Keyboard-navigable
-- High contrast mode for readability
-- Works in light + dark browser modes
+          if (clients.has(deviceId)) {
+            clients.get(deviceId).deviceInfo.currentSlide = msg.slide;
+          }
 
----
+          broadcast({
+            type: 'PLAYBACK_TICK',
+            slide: msg.slide,
+            timestamp: msg.timestamp,
+            masterTime: appState.playback.masterTime,
+            masterDeviceId: deviceId
+          }, deviceId); // Don't send back to sender
+          break;
 
-## **ERROR HANDLING**
+        // Playback pause
+        case 'PLAYBACK_PAUSE':
+          appState.playback.isPlaying = false;
+          if (clients.has(deviceId)) {
+            clients.get(deviceId).deviceInfo.isPlaying = false;
+          }
+          broadcast({
+            type: 'PLAYBACK_PAUSE',
+            deviceId
+          });
+          break;
 
-### **Audio Fails to Play**
-- Show subtle warning: "Audio unavailable"
-- Slides still proceed normally
-- Offer to re-download audio from server
+        // Jump to slide
+        case 'PLAYBACK_JUMP':
+          appState.playback.currentSlide = msg.slide;
+          appState.playback.timestamp = 0;
+          appState.playback.masterTime = Date.now();
+          broadcast({
+            type: 'PLAYBACK_JUMP',
+            slide: msg.slide,
+            masterTime: appState.playback.masterTime,
+            deviceId
+          });
+          break;
 
-### **WebSocket Disconnects**
-- Auto-retry with exponential backoff (1s, 2s, 4s, 8s max)
-- Show connection status indicator
-- Buffer changes until reconnected
+        // Device status update
+        case 'DEVICE_STATUS':
+          if (clients.has(deviceId)) {
+            const client = clients.get(deviceId);
+            client.deviceInfo.currentSlide = msg.currentSlide;
+            client.deviceInfo.isPlaying = msg.isPlaying;
+            client.deviceInfo.label = msg.label;
+          }
+          break;
 
-### **Admin Edits Conflict**
-- Device B tries to edit slide 5 while Device A is editing
-- Lock mechanism: first editor gets lock, second gets "someone else editing" message
-- Auto-release lock after 30s of inactivity
+        // Request full sync
+        case 'SYNC_REQUEST':
+          ws.send(JSON.stringify({
+            type: 'FULL_SYNC',
+            state: appState,
+            devices: Array.from(clients.values()).map(c => c.deviceInfo)
+          }));
+          break;
 
-### **IndexedDB Quota Exceeded**
-- Offer to export + clear cache
-- Suggest reducing image quality
-- Warn user before they hit limit
+        // Admin requests state export
+        case 'EXPORT_STATE':
+          ws.send(JSON.stringify({
+            type: 'STATE_EXPORT',
+            state: appState
+          }));
+          break;
 
----
+        // Admin imports state
+        case 'IMPORT_STATE':
+          appState = msg.state;
+          saveState();
+          broadcast({
+            type: 'FULL_SYNC',
+            state: appState,
+            devices: Array.from(clients.values()).map(c => c.deviceInfo)
+          });
+          break;
 
-## **TESTING CHECKLIST**
+        default:
+          console.log('Unknown message type:', msg.type);
+      }
+    } catch (e) {
+      console.error('Message error:', e.message);
+    }
+  });
 
-- [ ] Upload audio on Device A, appears on Device B in <2 seconds
-- [ ] Edit slide text on admin, live viewers see it without reload
-- [ ] Press play on Device A, Device B auto-syncs (same slide, ±500ms audio)
-- [ ] Offline: Device A continues playing, goes online, re-syncs perfectly
-- [ ] Multiple audio tracks: switching songs is seamless (fade in/out works)
-- [ ] Image upload: base64 displays correctly, file size handled
-- [ ] Mobile responsive: all text readable, buttons tappable
-- [ ] Keyboard: arrow keys advance slides, plays nicely
-- [ ] End card: animations trigger, custom text displays
-- [ ] Page refresh: all content persists (IndexedDB)
-- [ ] Export JSON: contains all data (images, audio, text)
-- [ ] Import JSON: replaces content, all devices see new version
-- [ ] Master device goes offline: next device becomes master
-- [ ] Device count: admin sees accurate list
+  // Handle disconnect
+  ws.on('close', () => {
+    clients.delete(deviceId);
+    console.log(`✗ Device disconnected: ${deviceId}`);
 
----
+    // If master disconnected, pick new master
+    if (appState.playback.masterDeviceId === deviceId && appState.playback.isPlaying) {
+      const remaining = Array.from(clients.values()).filter(c => c.deviceInfo.type === 'viewer');
+      if (remaining.length > 0) {
+        const newMaster = remaining[0].deviceInfo.id;
+        appState.playback.masterDeviceId = newMaster;
+        broadcast({
+          type: 'MASTER_CHANGED',
+          masterDeviceId: newMaster
+        });
+      } else {
+        appState.playback.isPlaying = false;
+        broadcast({ type: 'PLAYBACK_PAUSE' });
+      }
+    }
 
-## **DELIVERABLES**
+    broadcast({
+      type: 'DEVICE_LIST',
+      devices: Array.from(clients.values()).map(c => c.deviceInfo)
+    });
+  });
+});
 
-You will build/provide:
+// ─────────────────────────────────────────────
+// BROADCAST TO ALL CLIENTS
+// ─────────────────────────────────────────────
+function broadcast(message, excludeId = null) {
+  const data = JSON.stringify(message);
+  clients.forEach((client, id) => {
+    if (excludeId && id === excludeId) return;
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(data);
+    }
+  });
+}
 
-1. **admin.html** — Complete admin panel with all tabs, upload, preview, export
-2. **index.html** — Main slideshow with animations, audio, keyboard controls
-3. **app.js** — Engine handling sync, audio, slides, WebSocket
-4. **server.js** (Node.js) — WebSocket server for real-time sync (or Firebase alternative)
-5. **styles.css** — All styling (already excellent in your current code, maintain)
-6. **service-worker.js** — (Optional) offline support & caching
-7. **README.md** — Setup instructions, how to deploy
+// ─────────────────────────────────────────────
+// REST ENDPOINTS
+// ─────────────────────────────────────────────
+app.get('/api/state', (req, res) => {
+  res.json(appState);
+});
 
----
+app.post('/api/state', (req, res) => {
+  appState = req.body;
+  saveState();
+  broadcast({
+    type: 'FULL_SYNC',
+    state: appState
+  });
+  res.json({ ok: true });
+});
 
-## **DEPLOYMENT**
+app.get('/api/devices', (req, res) => {
+  res.json(Array.from(clients.values()).map(c => c.deviceInfo));
+});
 
-### **Local Testing**
-```bash
-npm install
-node server.js
-# Open http://localhost:3000 on multiple devices
-```
-
-### **Production (Choose One)**
-- **Heroku** + WebSocket support
-- **Firebase** (Realtime Database for sync)
-- **Vercel** + Upstash Redis for WebSocket fallback
-- **AWS** + API Gateway + DynamoDB
-
----
-
-## **FUTURE ENHANCEMENTS**
-
-- [ ] Share link: QR code for viewers to join
-- [ ] Viewer voting: upvote favorite slides (heart icon)
-- [ ] Recording: save playback to video
-- [ ] Analytics: which slides got rewound, skipped, etc.
-- [ ] Themes: preset color schemes beyond gold/blue
-- [ ] Text-to-speech for lyrics
-- [ ] Reactions: emoji reactions overlay on slides
-- [ ] Comments: viewers leave messages that admin sees
-
----
-
-**This is your complete specification. Every detail matters — from a 500ms sync tolerance to what happens when WiFi drops. Build it well, and it will be a gift someone treasures forever.** 🎵✨
+// ─────────────────────────────────────────────
+// START SERVER
+// ─────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📱 Open http://localhost:${PORT} on multiple devices`);
+});
