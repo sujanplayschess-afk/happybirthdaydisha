@@ -1,0 +1,19 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+model Content {
+  id        String   @id @default(cuid())
+  text      String   @db.Text
+  signature String   @default("With love")
+  theme     String   @default("cherry-blossom")
+  musicUrl  String?
+  images    String[] @default([])
+  createdAt DateTime @updatedAt
+}
